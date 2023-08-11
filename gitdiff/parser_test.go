@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -503,9 +502,7 @@ Date:   Tue Apr 2 22:55:40 2019 -0700
 				t.Fatalf("unexpected error opening input file: %v", err)
 			}
 
-			cmd := exec.Command("echo", "hello")
-
-			fileChan, err := Parse(cmd, f)
+			fileChan, err := Parse(f)
 			if test.Err {
 				if err == nil || err == io.EOF {
 					t.Fatalf("expected error parsing patch, but got %v", err)
@@ -580,7 +577,7 @@ index ebe9fa54..fe103e1d 100644
 	}
 	for i := 0; i < b.N; i++ {
 		reader := io.NopCloser(strings.NewReader(inputDiff))
-		ch, err := Parse(&exec.Cmd{}, reader)
+		ch, err := Parse(reader)
 		if err != nil {
 			panic(err)
 		}
