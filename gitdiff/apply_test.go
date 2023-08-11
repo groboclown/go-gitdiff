@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -232,9 +231,7 @@ type applyTest struct {
 func (at applyTest) run(t *testing.T, apply func(io.Writer, *Applier, *File) error) {
 	src, patch, out := at.Files.Load(t)
 
-	cmd := exec.Command("echo", "hello")
-
-	fileChan, err := Parse(cmd, io.NopCloser(bytes.NewReader(patch)))
+	fileChan, err := Parse(io.NopCloser(bytes.NewReader(patch)))
 	if err != nil {
 		t.Fatalf("failed to parse patch file: %v", err)
 	}
