@@ -75,6 +75,38 @@ func TestParseCombinedTextFragmentHeader(t *testing.T) {
 				NewLines:    2,
 			}},
 		},
+		"negativeCount2": {
+			Input: "@@@ -229,4 -229,18446744073709551615 +228,3 @@@ Comment\n",
+			Output: []TextFragment{{
+				Comment:     "Comment",
+				OldPosition: 229,
+				OldLines:    5,
+				NewPosition: 228,
+				NewLines:    4,
+			}, {
+				Comment:     "Comment",
+				OldPosition: 229,
+				OldLines:    0,
+				NewPosition: 228,
+				NewLines:    4,
+			}},
+		},
+		"negativeCount3": {
+			Input: "@@@ -229,4 -229,1 +228,18446744073709551615 @@@ Comment\n",
+			Output: []TextFragment{{
+				Comment:     "Comment",
+				OldPosition: 229,
+				OldLines:    5,
+				NewPosition: 228,
+				NewLines:    0,
+			}, {
+				Comment:     "Comment",
+				OldPosition: 229,
+				OldLines:    2,
+				NewPosition: 228,
+				NewLines:    0,
+			}},
+		},
 		"incompleteThree": {
 			Input: "@@@ -12,3 -5,9 +2\n",
 			Err:   "gitdiff: line 1: invalid fragment header",
@@ -300,7 +332,7 @@ func TestCombinedParseTextChunk(t *testing.T) {
 			Input: `--line 1.1,2.1
 - line 1.2
  -line 2.2
- `,
+`,
 			Fragments: []TextFragment{
 				{OldLines: 2, NewLines: 0},
 				{OldLines: 2, NewLines: 0},
@@ -476,6 +508,181 @@ func TestCombinedParseTextFragments(t *testing.T) {
 				},
 			},
 		},
+		"strangeCount": {
+			// This test is why the implementation can't rely upon the lines changed.
+			// Its values are off by 1, according to the description of the meaning in the
+			// documentation.
+			Input: `@@@ -225,4 -237,2 +225,6 @@@ C0
+ +line 1
+ +line 2
+ +line 3
+ +line 4
+- line 5
+++line 6
+++line 7
++ line 8
+ -line 9
+ -line 10
+`,
+			Fragments: []TextFragment{
+				{
+					Comment:     "C0",
+					OldPosition: 225,
+					OldLines:    4,
+					NewPosition: 225,
+					NewLines:    6,
+					Lines: []Line{
+						{OpContext, "line 1\n"},
+						{OpContext, "line 2\n"},
+						{OpContext, "line 3\n"},
+						{OpContext, "line 4\n"},
+						{OpDelete, "line 5\n"},
+						{OpAdd, "line 6\n"},
+						{OpAdd, "line 7\n"},
+						{OpAdd, "line 8\n"},
+						{OpContext, "line 9\n"},
+						{OpContext, "line 10\n"},
+					},
+					LinesDeleted: 1,
+					LinesAdded:   3,
+				},
+				{
+					Comment:     "C0",
+					OldPosition: 237,
+					OldLines:    2,
+					NewPosition: 225,
+					NewLines:    6,
+					Lines: []Line{
+						{OpAdd, "line 1\n"},
+						{OpAdd, "line 2\n"},
+						{OpAdd, "line 3\n"},
+						{OpAdd, "line 4\n"},
+						{OpContext, "line 5\n"},
+						{OpAdd, "line 6\n"},
+						{OpAdd, "line 7\n"},
+						{OpContext, "line 8\n"},
+						{OpDelete, "line 9\n"},
+						{OpDelete, "line 10\n"},
+					},
+					LinesDeleted: 2,
+					LinesAdded:   6,
+				},
+			},
+		},
+		"negativeLines1": {
+			Input: `@@@ -229,4 -230,18446744073709551615 +228,3 @@@ C1
+ +line 1
+ +line 2
+ +line 3
+ +line 4
+- line 5
+`,
+			Fragments: []TextFragment{
+				{
+					Comment:     "C1",
+					OldPosition: 229,
+					OldLines:    5,
+					NewPosition: 228,
+					NewLines:    4,
+					Lines: []Line{
+						{OpContext, "line 1\n"},
+						{OpContext, "line 2\n"},
+						{OpContext, "line 3\n"},
+						{OpContext, "line 4\n"},
+						{OpDelete, "line 5\n"},
+					},
+					LinesDeleted: 1,
+					LinesAdded:   0,
+				},
+				{
+					Comment:     "C1",
+					OldPosition: 230,
+					OldLines:    0,
+					NewPosition: 228,
+					NewLines:    4,
+					Lines: []Line{
+						{OpAdd, "line 1\n"},
+						{OpAdd, "line 2\n"},
+						{OpAdd, "line 3\n"},
+						{OpAdd, "line 4\n"},
+						{OpContext, "line 5\n"},
+					},
+					LinesDeleted: 0,
+					LinesAdded:   4,
+				},
+			},
+		},
+		"negativeLines2": {
+			Input: `@@@ -232,18446744073709551615 -227,1 +230,1 @@@
+++line 1
++ line 2
+ -line 3
+`,
+			Fragments: []TextFragment{
+				{
+					OldPosition: 232,
+					OldLines:    0,
+					NewPosition: 230,
+					NewLines:    2,
+					Lines: []Line{
+						{OpAdd, "line 1\n"},
+						{OpAdd, "line 2\n"},
+						{OpContext, "line 3\n"},
+					},
+					LinesDeleted: 0,
+					LinesAdded:   2,
+				},
+				{
+					OldPosition: 227,
+					OldLines:    2,
+					NewPosition: 230,
+					NewLines:    2,
+					Lines: []Line{
+						{OpAdd, "line 1\n"},
+						{OpContext, "line 2\n"},
+						{OpDelete, "line 3\n"},
+					},
+					LinesDeleted: 1,
+					LinesAdded:   1,
+				},
+			},
+		},
+		"negativeMergedLines": {
+			Input: `@@@ -1,2 -1,2 +1,18446744073709551615 @@@
+--line 1
+--line 2
+--line 3
+`,
+			File: File{IsDelete: true},
+			Fragments: []TextFragment{
+				{
+					OldPosition: 1,
+					OldLines:    3,
+					NewPosition: 1,
+					NewLines:    0,
+					Lines: []Line{
+						{OpDelete, "line 1\n"},
+						{OpDelete, "line 2\n"},
+						{OpDelete, "line 3\n"},
+					},
+					LinesDeleted: 3,
+					LinesAdded:   0,
+				},
+				{
+					OldPosition: 1,
+					OldLines:    3,
+					NewPosition: 1,
+					NewLines:    0,
+					Lines: []Line{
+						{OpDelete, "line 1\n"},
+						{OpDelete, "line 2\n"},
+						{OpDelete, "line 3\n"},
+					},
+					LinesDeleted: 3,
+					LinesAdded:   0,
+				},
+			},
+		},
 		"badNewFile": {
 			Input: `@@@@ -1 -1 -1 +1,2 @@@@
 ---old line 1
@@ -524,7 +731,7 @@ func TestCombinedParseTextFragments(t *testing.T) {
 
 			for i, frag := range test.Fragments {
 				if !reflect.DeepEqual(&frag, file.TextFragments[i]) {
-					t.Errorf("incorrect fragment at position %d\nexpected: %+v\nactual: %+v", i, frag, file.TextFragments[i])
+					t.Errorf("incorrect fragment at position %d\nexpected: %+v\nactual: %+v", i, frag, *file.TextFragments[i])
 				}
 			}
 		})

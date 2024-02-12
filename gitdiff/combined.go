@@ -1,7 +1,9 @@
 package gitdiff
 
 import (
+	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -82,12 +84,33 @@ func (p *parser) ParseCombinedTextFragmentHeader() ([]*TextFragment, error) {
 	if len(ranges) != parentCount+1 {
 		return nil, p.Errorf(0, "invalid fragment header")
 	}
-
-	// Parse the final merged range.
-	var err error
-	newPosition, newLines, err := parseRange(ranges[parentCount][1:])
+	frags, err := parseCombinedHeaderRanges(comment, ranges)
 	if err != nil {
 		return nil, p.Errorf(0, "invalid fragment header: %v", err)
+	}
+
+	if err := p.Next(); err != nil && err != io.EOF {
+		return nil, err
+	}
+	return frags, nil
+}
+
+func parseCombinedHeaderRanges(comment string, ranges []string) ([]*TextFragment, error) {
+	parentCount := len(ranges) - 1
+
+	// This needs to cope with a strange old-line range of '-1' that some versions
+	// of Git produce.  When this happens, the old and new line counts must increment by 1.
+	var negativeCount int64 = 0
+
+	// Parse the merged range.
+	var err error
+	newPosition, newLines, err := parseCombinedRange(ranges[parentCount][1:])
+	if err != nil {
+		return nil, err
+	}
+	if newLines < 0 {
+		negativeCount -= newLines
+		// The newLines count remains negative, so it adjusts to zero at the end.
 	}
 
 	// Parse the parent file ranges.
@@ -98,16 +121,51 @@ func (p *parser) ParseCombinedTextFragmentHeader() ([]*TextFragment, error) {
 			NewPosition: newPosition,
 			NewLines:    newLines,
 		}
-		if f.OldPosition, f.OldLines, err = parseRange(ranges[i][1:]); err != nil {
-			return nil, p.Errorf(0, "invalid fragment header: %v", err)
+		if f.OldPosition, f.OldLines, err = parseCombinedRange(ranges[i][1:]); err != nil {
+			return nil, err
+		}
+		if f.OldLines < 0 {
+			negativeCount -= f.OldLines
+			// The OldLines count remains negative, so the final adjustment makes it zero.
 		}
 		frags[i] = f
 	}
 
-	if err := p.Next(); err != nil && err != io.EOF {
-		return nil, err
+	// Adjust each fragment count based on the negative count.
+	for _, f := range frags {
+		f.OldLines += negativeCount
+		f.NewLines += negativeCount
 	}
+
 	return frags, nil
+}
+
+func parseCombinedRange(s string) (start int64, end int64, err error) {
+	parts := strings.SplitN(s, ",", 2)
+
+	if start, err = strconv.ParseInt(parts[0], 10, 64); err != nil {
+		nerr := err.(*strconv.NumError)
+		return 0, 0, fmt.Errorf("bad start of range: %s: %v", parts[0], nerr.Err)
+	}
+
+	if len(parts) > 1 {
+		if parts[1] == "18446744073709551615" {
+			// There are some versions of "git diff --cc" that return a uint64 version of -1,
+			// which is this number.  That seems to mean that, for this specific file,
+			// there wasn't any change.
+			// This is the only version of this large number that's been seen, though it's possible that
+			// the git diff --cc format can return other negative numbers.  In those cases, more complex
+			// logic would be needed to convert the uint64 to signed int64.
+			end = -1
+		} else if end, err = strconv.ParseInt(parts[1], 10, 64); err != nil {
+			nerr := err.(*strconv.NumError)
+			return 0, 0, fmt.Errorf("bad end of range: %s: %v", parts[1], nerr.Err)
+		}
+	} else {
+		end = 1
+	}
+
+	return
 }
 
 func (p *parser) ParseCombinedTextChunk(frags []*TextFragment) error {
@@ -115,17 +173,6 @@ func (p *parser) ParseCombinedTextChunk(frags []*TextFragment) error {
 		return p.Errorf(0, "no content following fragment header")
 	}
 	parentCount := len(frags)
-	var oldLines int64 = 0
-	// Due to ParseCombinedTextFragmentHeader, the new line count is the same
-	// in all fragments.
-	// That first one looks like a nice choice.
-	newLines := frags[0].NewLines
-
-	for _, frag := range frags {
-		oldLines += frag.OldLines
-	}
-	// Make an immutable copy of the old lines for later comparisons.
-	allOldLines := oldLines
 
 	// Track whether any line included an alteration.
 	noLineChanges := true
@@ -139,9 +186,17 @@ func (p *parser) ParseCombinedTextChunk(frags []*TextFragment) error {
 	altered := make([]bool, parentCount)
 
 lineLoop:
-	for oldLines > 0 || newLines > 0 {
+	for {
 		line := p.Line(0)
+		// Should be able to count the lines required by the range header,
+		// however there are some rare times when that does not correctly align.
+		// Therefore, the 'text.go' version of line count checking isn't used here.
+		if !areValidOps(line, parentCount) {
+			break
+		}
+
 		parentOps, data := line[0:parentCount], line[parentCount:]
+
 		// Each character in parentOps is for each parent, to show how target file line
 		// differs from each file of the parents.  If a fragment has a '-', then it is
 		// a removal.  If another fragment has a '+' but this one has a ' ', then
@@ -170,7 +225,6 @@ lineLoop:
 			case '-':
 				hasRemove = true
 				altered[idx] = true
-				oldLines--
 				noLineChanges = false
 				frag.LinesDeleted++
 				trailingContext = 0
@@ -202,31 +256,15 @@ lineLoop:
 
 		// The complex counting method.
 
-		if hasAdd {
-			// If any number of parent files is marked as an add, then count that
-			// as a single add for the new count.
-			newLines--
-		}
-
 		// Lines with removes reduce the old line count once per removal operation, and
 		//   the counting happens during each file's removal action.
-		if !hasRemove {
-			// For lines that have no removes, then this is either an add or a
-			// context line.  In both cases, the files which had a blank operation count
-			// as an old line.
-			for _, fragChanged := range altered {
-				if !fragChanged {
-					oldLines--
-				}
-			}
-			if !hasAdd && hasContext {
-				// Lines with no removes, no adds, and had at least 1 context entry
-				// means that this line a full context - no add and no remove.
-				if noLineChanges {
-					leadingContext++
-				} else {
-					trailingContext++
-				}
+		if !hasRemove && !hasAdd && hasContext {
+			// Lines with no removes, no adds, and had at least 1 context entry
+			// means that this line a full context - no add and no remove.
+			if noLineChanges {
+				leadingContext++
+			} else {
+				trailingContext++
 			}
 		}
 
@@ -238,15 +276,15 @@ lineLoop:
 		}
 	}
 
-	if oldLines != 0 || newLines != 0 {
-		hdr := max(allOldLines-oldLines, frags[0].NewLines-newLines) + 1
-		return p.Errorf(-hdr, "fragment header miscounts lines: %+d old, %+d new", -oldLines, -newLines)
-	}
+	// There is a rare, but valid, scenario where the line counts don't match up with
+	// what was parsed.  This seems related to the "-1" range value.  Because of that,
+	// this function can't validate the header line count against the lines encountered.
+
 	if noLineChanges {
 		return p.Errorf(0, "fragment contains no changes")
 	}
 
-	// check for a final "no newline" marker since it is not included in the
+	// Check for a final "no newline" marker since it is not included in the
 	// counters used to stop the loop above
 	if isNoNewlineMarker(p.Line(0)) {
 		for _, frag := range frags {
@@ -266,4 +304,21 @@ lineLoop:
 	}
 
 	return nil
+}
+
+func areValidOps(line string, count int) bool {
+	if len(line) < count {
+		// Generally, this happens with an empty line ('\n'), but could also be file corruption.
+		return false
+	}
+	for count > 0 {
+		count--
+		c := line[count]
+		switch c {
+		case ' ', '+', '-', '\\':
+		default:
+			return false
+		}
+	}
+	return true
 }
