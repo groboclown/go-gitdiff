@@ -630,7 +630,49 @@ Date:   Tue Apr 2 22:55:40 2019 -0700
 					TextFragments: textFragments,
 				},
 			},
-			Preamble: binaryPreamble,
+			Preamble: textPreamble,
+		},
+		"emptyCommit": {
+			InputFile: "testdata/empty-commit.patch",
+			Output: []*File{
+				{
+					PatchHeader: &PatchHeader{
+						SHA: "48f13f61afb200ad8386573632cba3abd1703af2",
+						Author: &PatchIdentity{
+							Name:  "Morton Haypenny",
+							Email: "mhaypenny@example.com",
+						},
+						AuthorDate: asTime("2017-11-03T12:29:49Z"),
+						Title:      "A simple change",
+						Body:       "The change is simple.",
+					},
+					OldName:       "dir/file1.txt",
+					NewName:       "dir/file1.txt",
+					OldMode:       os.FileMode(0100644),
+					OldOIDPrefix:  "422cce7",
+					NewOIDPrefix:  "24b39ed",
+					TextFragments: textFragments,
+				},
+				{
+					PatchHeader: &PatchHeader{
+						SHA: "183d9cdbecda47e6e95acf9e4e23fa3a71ba99ad",
+						Author: &PatchIdentity{
+							Name:  "Regina Smithee",
+							Email: "rsmithee@example.com",
+						},
+						AuthorDate: asTime("2017-09-14T19:46:12Z"),
+						Title:      "Simple change",
+						Body:       "Simple change body.",
+					},
+					OldName:       "d1/file2.txt",
+					NewName:       "d1/file2.txt",
+					OldMode:       os.FileMode(0100755),
+					OldOIDPrefix:  "c6513ff",
+					NewOIDPrefix:  "bf4c6cc",
+					TextFragments: textFragments,
+				},
+			},
+			Preamble: textPreamble,
 		},
 	}
 
@@ -660,6 +702,8 @@ Date:   Tue Apr 2 22:55:40 2019 -0700
 				t.Fatalf("incorrect number of parsed files: expected %d, actual %d", len(test.Output), len(files))
 			}
 			for i := range test.Output {
+				prepareFileDiff(test.Output[i])
+				prepareFileDiff(files[i])
 				if !reflect.DeepEqual(test.Output[i], files[i]) {
 					exp, _ := json.MarshalIndent(test.Output[i], "", "  ")
 					act, _ := json.MarshalIndent(files[i], "", "  ")
@@ -739,4 +783,14 @@ func asTime(s string) time.Time {
 		panic(err)
 	}
 	return t
+}
+
+// prepareFileDiff performs a minimal preparation for DeepEqual
+func prepareFileDiff(f *File) {
+	if f == nil {
+		return
+	}
+	if f.PatchHeader != nil {
+		f.PatchHeader.AuthorDate = time.Unix(f.PatchHeader.AuthorDate.Unix(), 0)
+	}
 }

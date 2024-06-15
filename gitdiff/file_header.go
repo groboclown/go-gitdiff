@@ -278,6 +278,8 @@ func parseGitHeaderData(f *File, line, defaultName string) (end bool, err error)
 		{"@@ -", true, nil},
 		// TODO '@@@ -' is the simplest form of the combined diff; it
 		//   could be any number of '@' - one per parent + 1 '@'.
+		//   The fix involves adding a separate '@' count discovery
+		//   before this block (as '@' is the most commonly encountered structure).
 		{"@@@ -", true, nil},
 		{"--- ", false, parseGitHeaderOldName},
 		{"+++ ", false, parseGitHeaderNewName},
