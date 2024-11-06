@@ -642,7 +642,7 @@ Date:   Tue Apr 2 22:55:40 2019 -0700
 							Name:  "Morton Haypenny",
 							Email: "mhaypenny@example.com",
 						},
-						AuthorDate: asTime("2017-11-03T12:29:49Z"),
+						AuthorDate: asTime("2017-11-03T12:29:49+00:00"),
 						Title:      "A simple change",
 						Body:       "The change is simple.",
 					},
@@ -660,7 +660,7 @@ Date:   Tue Apr 2 22:55:40 2019 -0700
 							Name:  "Regina Smithee",
 							Email: "rsmithee@example.com",
 						},
-						AuthorDate: asTime("2017-09-14T19:46:12Z"),
+						AuthorDate: asTime("2017-09-14T19:46:12+00:00"),
 						Title:      "Simple change",
 						Body:       "Simple change body.",
 					},
@@ -776,7 +776,7 @@ func newTestParser(input string, init bool) *parser {
 }
 
 func asTime(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
+	t, err := time.ParseInLocation(time.RFC3339, s, time.Local)
 	if err != nil {
 		panic(err)
 	}
